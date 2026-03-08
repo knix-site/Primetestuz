@@ -69,6 +69,9 @@ body {
   justify-content: space-between;
   gap: 16px;
   align-items: flex-start;
+  position: relative;
+  z-index: 50;
+  overflow: visible;
 }
 
 h1 {
@@ -154,6 +157,8 @@ h1 {
 
 .panel {
   padding: 20px;
+  position: relative;
+  z-index: 1;
 }
 
 h2 {
@@ -344,7 +349,9 @@ input[type="text"]:focus {
 
   .profile-card {
     left: 0;
-    right: auto;
+    right: 0;
+    min-width: auto;
+    width: min(92vw, 360px);
   }
 
   .search-row {
@@ -395,6 +402,10 @@ input[type="text"]:focus {
 
 .profile-menu {
   position: relative;
+}
+
+.profile-menu[open] {
+  z-index: 1200;
 }
 
 .profile-menu > summary {
@@ -451,7 +462,7 @@ input[type="text"]:focus {
   border-radius: 14px;
   padding: 12px;
   box-shadow: 0 14px 28px rgba(15, 23, 42, 0.14);
-  z-index: 10;
+  z-index: 1300;
 }
 
 .profile-card p {
@@ -496,3 +507,6 @@ input[type="text"]:focus {
   width: 100%;
   margin-top: 6px;
 }
+
+
+
