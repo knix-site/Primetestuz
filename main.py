@@ -419,14 +419,27 @@ def generate_certificate(user, percent, tg_id, test_code, result_lines=None):
     draw.rectangle([80, 80, width - 80, height - 80], outline="#f1c40f", width=8)
 
 
-    try:
-        title_font = ImageFont.truetype("arial.ttf", 95)
-        subtitle_font = ImageFont.truetype("arial.ttf", 40)
-        name_font = ImageFont.truetype("arial.ttf", 85)
-        text_font = ImageFont.truetype("arial.ttf", 48)
-        small_font = ImageFont.truetype("arial.ttf", 36)
-    except Exception:
-        title_font = subtitle_font = name_font = text_font = small_font = ImageFont.load_default()
+    def load_font(size: int, bold: bool = False):
+        font_candidates = [
+            os.path.join("fonts", "DejaVuSans-Bold.ttf") if bold else os.path.join("fonts", "DejaVuSans.ttf"),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+        ]
+
+        for fp in font_candidates:
+            if fp and os.path.exists(fp):
+                try:
+                    return ImageFont.truetype(fp, size)
+                except Exception:
+                    pass
+
+        return ImageFont.load_default()
+
+    title_font = load_font(95, bold=True)
+    subtitle_font = load_font(40)
+    name_font = load_font(85, bold=True)
+    text_font = load_font(48)
+    small_font = load_font(36)
 
     def center(text, y, font, color="#2c3e50"):
         w = draw.textlength(text, font=font)
@@ -1069,6 +1082,7 @@ if __name__ == "__main__":
     flask_thread.start()
 
     run_bot()
+
 
 
 
