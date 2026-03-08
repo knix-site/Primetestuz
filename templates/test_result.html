@@ -1,0 +1,26 @@
+﻿{% extends "base.html" %}
+{% block title %}Natija{% endblock %}
+{% block content %}
+<section class="panel glass">
+  <div class="row-between">
+    <h2>{{ test['title'] }} natijasi</h2>
+    <a class="btn btn-soft" href="{{ url_for('test_list') }}?tg_id={{ tg_id }}&key={{ key }}">Testlar ro'yxati</a>
+  </div>
+
+  <p class="score">Natija: {{ score }}/{{ total }}</p>
+
+  {% for item in results %}
+    <article class="question {{ 'correct' if item['is_correct'] else 'wrong' }}">
+      <h3>{{ loop.index }}-savol: {{ item['question']['text'] }}</h3>
+
+      {% for letter in ["a", "b", "c", "d"] %}
+        {% set text = item['question']['option_a'] if letter == 'a' else item['question']['option_b'] if letter == 'b' else item['question']['option_c'] if letter == 'c' else item['question']['option_d'] %}
+        <div class="option static {% if letter == item['question']['correct_option'] %}opt-correct{% elif letter == item['selected'] %}opt-wrong{% endif %}">
+          <span class="dot"></span>
+          <span>{{ letter|upper }}) {{ text }}</span>
+        </div>
+      {% endfor %}
+    </article>
+  {% endfor %}
+</section>
+{% endblock %}

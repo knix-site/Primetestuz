@@ -1,0 +1,57 @@
+﻿{% extends "base.html" %}
+{% block title %}{{ test['title'] }}{% endblock %}
+{% block content %}
+<section class="panel glass">
+  <div class="row-between">
+    <h2>{{ test['title'] }}</h2>
+    <a class="btn btn-soft" href="{{ url_for('test_list') }}?tg_id={{ tg_id }}&key={{ key }}">Ortga</a>
+  </div>
+
+  {% if already %}
+    <div class="warn">
+      Siz bu testni allaqachon topshirgansiz. Qayta topshirish mumkin emas.<br />
+      Natija: {{ already['score'] }}/{{ already['total'] }}
+    </div>
+  {% else %}
+    {% if error %}
+      <div class="warn">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" id="quizForm" class="quiz-form">
+      {% for q in questions %}
+        <article class="question" data-id="{{ q['id'] }}">
+          <h3>{{ loop.index }}-savol: {{ q['text'] }}</h3>
+
+          {% for letter in ["a", "b", "c", "d"] %}
+            <label class="option">
+              <input type="radio" name="q_{{ q['id'] }}" value="{{ letter }}" required />
+              <span class="dot"></span>
+              <span>
+                {% if letter == "a" %}{{ q['option_a'] }}{% endif %}
+                {% if letter == "b" %}{{ q['option_b'] }}{% endif %}
+                {% if letter == "c" %}{{ q['option_c'] }}{% endif %}
+                {% if letter == "d" %}{{ q['option_d'] }}{% endif %}
+              </span>
+            </label>
+          {% endfor %}
+        </article>
+      {% endfor %}
+
+      <button type="submit" class="btn btn-primary">Javoblarni yuborish</button>
+    </form>
+
+    <script>
+      const options = document.querySelectorAll('.option input');
+      options.forEach((input) => {
+        input.addEventListener('change', (e) => {
+          const name = e.target.name;
+          document.querySelectorAll(`input[name="${name}"]`).forEach((i) => {
+            i.closest('.option').classList.remove('selected');
+          });
+          e.target.closest('.option').classList.add('selected');
+        });
+      });
+    </script>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,79 @@
+﻿<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PRIME TEST - Live Preview</title>
+  <link rel="icon" href="./Rasmlar/asosiy.png" />
+  <link rel="stylesheet" href="./static/site.css" />
+  <link rel="stylesheet" href="./preview.css" />
+</head>
+<body>
+  <div class="ambient ambient-top"></div>
+  <div class="ambient ambient-bottom"></div>
+
+  <main class="shell">
+    <header class="topbar glass">
+      <div class="brand-row">
+        <img class="brand-logo" src="./Rasmlar/asosiy.png" alt="PRIME TEST" />
+        <div>
+          <p class="chip">Online test platformasi</p>
+          <h1>PRIME TEST</h1>
+          <p class="subtitle">Matematika milliy sertifkat uchun tayyorlov testlari</p>
+        </div>
+      </div>
+
+      <div class="right-box">
+        <details class="profile-menu">
+          <summary>
+            <span class="profile-initials" id="profileInitials">IN</span>
+            <svg class="profile-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </summary>
+          <div class="profile-card" id="profileCard">
+            <div id="guestProfile">
+              <a class="btn btn-primary" href="https://t.me/mathprimebot" target="_blank" rel="noopener">Kirish</a>
+              <p style="margin-top:10px;color:#64748b;font-size:13px;">Ro'yxatdan o'tgach shu yerda ma'lumotlar chiqadi.</p>
+            </div>
+
+            <div id="userProfile" class="hidden">
+              <p><strong>Ism:</strong> <span id="pfFirst">-</span></p>
+              <p><strong>Familiya:</strong> <span id="pfLast">-</span></p>
+              <p><strong>Viloyat:</strong> <span id="pfRegion">-</span></p>
+              <p><strong>TG ID:</strong> <span id="pfTg">-</span></p>
+              <button id="editProfileBtn" class="btn btn-soft btn-sm" type="button">Ma'lumotni o'zgartirish</button>
+            </div>
+          </div>
+        </details>
+
+        <div class="socials">
+          <a href="https://t.me/matematika_prime" target="_blank" rel="noopener">
+            <img src="./Rasmlar/telegram.png" alt="Telegram" />
+            <span>Telegram kanal</span>
+          </a>
+          <a href="https://youtube.com/@matematikaprime" target="_blank" rel="noopener">
+            <img src="./Rasmlar/youtube.png" alt="YouTube" />
+            <span>YouTube kanal</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <section class="panel glass">
+      <h2>Barcha testlar</h2>
+      <div class="search-row">
+        <input id="searchInput" type="text" placeholder="Masalan: 41-test" />
+        <button id="clearSearch" class="btn btn-soft" type="button">Tozalash</button>
+      </div>
+
+      <div id="testsGrid" class="tests-grid"></div>
+      <p id="emptyText" class="warn hidden">Hech qanday test topilmadi.</p>
+    </section>
+
+    <section id="testPanel" class="panel glass hidden"></section>
+  </main>
+
+  <script src="./preview.js"></script>
+</body>
+</html>

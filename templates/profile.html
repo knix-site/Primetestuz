@@ -1,0 +1,33 @@
+﻿{% extends "base.html" %}
+{% block title %}Profil{% endblock %}
+{% block content %}
+<section class="panel glass">
+  <div class="row-between">
+    <h2>Profil ma'lumotlari</h2>
+    <a class="btn btn-soft" href="{{ url_for('test_list') }}?tg_id={{ tg_id }}&key={{ key }}">Ortga</a>
+  </div>
+
+  {% if error %}
+    <div class="warn">{{ error }}</div>
+  {% endif %}
+  {% if success %}
+    <div class="ok">{{ success }}</div>
+  {% endif %}
+
+  <form method="post" class="profile-form">
+    <label>
+      <span>Ism</span>
+      <input type="text" name="first_name" value="{{ user['first_name'] }}" required minlength="2" />
+    </label>
+    <label>
+      <span>Familiya</span>
+      <input type="text" name="last_name" value="{{ user['last_name'] }}" required minlength="2" />
+    </label>
+    <label>
+      <span>Viloyat</span>
+      <input type="text" name="region" value="{{ user['region'] }}" required minlength="2" />
+    </label>
+    <button type="submit" class="btn btn-primary">Saqlash</button>
+  </form>
+</section>
+{% endblock %}

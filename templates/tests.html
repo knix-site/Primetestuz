@@ -1,0 +1,44 @@
+﻿{% extends "base.html" %}
+{% block title %}Testlar ro'yxati{% endblock %}
+{% block content %}
+<section class="panel glass">
+  <h2>Barcha testlar</h2>
+  <form method="get" class="search-row">
+    <input type="hidden" name="tg_id" value="{{ tg_id }}" />
+    <input type="hidden" name="key" value="{{ key }}" />
+    <input
+      id="searchInput"
+      type="text"
+      name="q"
+      value="{{ search }}"
+      placeholder="Testni qidiring, masalan: 41-test"
+      autocomplete="off"
+    />
+    <button type="submit" class="btn btn-primary">Qidirish</button>
+  </form>
+
+  <div class="tests-grid" id="testsGrid">
+    {% for t in tests %}
+      <article class="test-card" data-title="{{ t['title']|lower }}">
+        <h3>{{ t['title'] }}</h3>
+        <p>{{ t['description'] or "Test tavsifi mavjud emas" }}</p>
+        <a class="btn btn-soft" href="{{ url_for('test_detail', test_id=t['id']) }}?tg_id={{ tg_id }}&key={{ key }}">Testni ochish</a>
+      </article>
+    {% else %}
+      <p class="warn">Hech qanday test topilmadi.</p>
+    {% endfor %}
+  </div>
+</section>
+
+<script>
+  const input = document.getElementById("searchInput");
+  const cards = document.querySelectorAll(".test-card");
+
+  input.addEventListener("input", function () {
+    const q = input.value.trim().toLowerCase();
+    cards.forEach((card) => {
+      card.style.display = card.dataset.title.includes(q) ? "block" : "none";
+    });
+  });
+</script>
+{% endblock %}

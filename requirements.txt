@@ -1,0 +1,6 @@
+﻿Flask==3.0.3
+python-telegram-bot==21.7
+openpyxl==3.1.5
+Pillow==11.1.0
+gunicorn==22.0.0
+

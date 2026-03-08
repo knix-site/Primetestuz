@@ -1,0 +1,85 @@
+﻿<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}PRIME TEST{% endblock %}</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logos/asosiy.png') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='site.css') }}" />
+</head>
+<body>
+  <div class="ambient ambient-top"></div>
+  <div class="ambient ambient-bottom"></div>
+
+  <main class="shell">
+    <header class="topbar glass">
+      <div class="brand-row">
+        <img class="brand-logo" src="{{ url_for('static', filename='logos/asosiy.png') }}" alt="PRIME TEST" />
+        <div>
+          <p class="chip">PRIME TEST</p>
+          <h1>PRIME TEST</h1>
+          {% if user %}
+          <p class="subtitle">Foydalanuvchi: {{ user['first_name'] }} {{ user['last_name'] }}</p>
+          {% else %}
+          <p class="subtitle">Matematika test platformasi</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="right-box">
+        <details class="profile-menu">
+          <summary>
+            <span class="profile-initials">{{ ((user['first_name'][:1] ~ user['last_name'][:1]) if user else 'IN')|upper }}</span>
+            <svg class="profile-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </summary>
+          <div class="profile-card">
+            {% if user %}
+              <p><strong>Ism:</strong> {{ user['first_name'] }}</p>
+              <p><strong>Familiya:</strong> {{ user['last_name'] }}</p>
+              <p><strong>Viloyat:</strong> {{ user['region'] }}</p>
+              <p><strong>TG ID:</strong> {{ user['telegram_id'] }}</p>
+              <a class="btn btn-soft btn-sm" href="{{ url_for('profile_page') }}?tg_id={{ user['telegram_id'] }}&key={{ user['access_key'] }}">Ma'lumotni o'zgartirish</a>
+            {% else %}
+              <a class="btn btn-primary" href="{{ bot_link }}" target="_blank" rel="noopener">Kirish</a>
+            {% endif %}
+          </div>
+        </details>
+
+        <div class="socials">
+          <a href="{{ tg_channel }}" target="_blank" rel="noopener">
+            <img src="{{ url_for('static', filename='logos/telegram.png') }}" alt="Telegram" />
+            <span>Telegram kanal</span>
+          </a>
+          <a href="{{ youtube }}" target="_blank" rel="noopener">
+            <img src="{{ url_for('static', filename='logos/youtube.png') }}" alt="YouTube" />
+            <span>YouTube kanal</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    {% block content %}{% endblock %}
+  </main>
+  <script>
+    document.addEventListener("click", function (e) {
+      const openMenu = document.querySelector(".profile-menu[open]");
+      if (!openMenu) return;
+      if (!openMenu.contains(e.target)) {
+        openMenu.removeAttribute("open");
+      }
+    });
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        document.querySelectorAll(".profile-menu[open]").forEach(function (m) {
+          m.removeAttribute("open");
+        });
+      }
+    });
+  </script>
+</body>
+</html>
+
+
