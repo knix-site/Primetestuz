@@ -9,7 +9,7 @@ import warnings
 import secrets
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote_plus, urlparse
 
 from flask import Flask, abort, g, redirect, render_template, request, url_for
 from telegram import (
@@ -258,6 +258,46 @@ def update_user_profile(telegram_id: int, first_name: str, last_name: str, regio
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def upsert_user_with_access_key(
+    telegram_id: int,
+    first_name: str,
+    last_name: str,
+    region: str,
+    access_key: str,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with db_conn() as conn:
+        existing = conn.execute("SELECT telegram_id FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE users SET first_name = ?, last_name = ?, region = ?, access_key = ? WHERE telegram_id = ?",
+                (first_name, last_name, region, access_key, telegram_id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO users (telegram_id, first_name, last_name, region, access_key, registered_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (telegram_id, first_name, last_name, region, access_key, now),
+            )
+        conn.commit()
+
+
+def build_site_link(
+    telegram_id: int,
+    access_key: str,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    region: str | None = None,
+) -> str:
+    params = [f"tg_id={telegram_id}", f"key={quote_plus(access_key)}"]
+    if first_name:
+        params.append(f"fn={quote_plus(first_name)}")
+    if last_name:
+        params.append(f"ln={quote_plus(last_name)}")
+    if region:
+        params.append(f"rg={quote_plus(region)}")
+    return f"{BASE_SITE_URL}/?{'&'.join(params)}"
 
 
 def is_valid_user(telegram_id: int, key: str) -> sqlite3.Row | None:
@@ -548,12 +588,24 @@ def push_test_result_certificate(
 def test_list() -> str:
     tg_id = request.args.get("tg_id", type=int)
     key = request.args.get("key", default="", type=str)
+    first_name = request.args.get("fn", default="", type=str).strip()
+    last_name = request.args.get("ln", default="", type=str).strip()
+    region = request.args.get("rg", default="", type=str).strip()
     search = request.args.get("q", default="", type=str).strip()
 
     if not tg_id or not key:
         return render_template("public_home.html", user=None, tg_channel=TG_CHANNEL_URL, youtube=YOUTUBE_URL)
 
     user = is_valid_user(tg_id, key)
+    if not user and first_name and last_name and region:
+        upsert_user_with_access_key(
+            telegram_id=tg_id,
+            first_name=first_name,
+            last_name=last_name,
+            region=region,
+            access_key=key,
+        )
+        user = is_valid_user(tg_id, key)
     if not user:
         return render_template("public_home.html", user=None, tg_channel=TG_CHANNEL_URL, youtube=YOUTUBE_URL)
 
@@ -771,7 +823,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     existing = get_user_by_telegram_id(tg_id)
 
     if existing:
-        site_link = f"{BASE_SITE_URL}/?tg_id={tg_id}&key={existing['access_key']}"
+        site_link = build_site_link(tg_id, existing["access_key"], existing["first_name"], existing["last_name"], existing["region"])
         await _send_access_button_or_text(update.message, "✅ Siz allaqachon ro'yxatdan o'tgansiz.", site_link)
         return ConversationHandler.END
 
@@ -808,7 +860,7 @@ async def region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["region"] = text
     tg_id = update.effective_user.id
     key = save_user(tg_id, context.user_data["first_name"], context.user_data["last_name"], context.user_data["region"])
-    site_link = f"{BASE_SITE_URL}/?tg_id={tg_id}&key={key}"
+    site_link = build_site_link(tg_id, key, context.user_data["first_name"], context.user_data["last_name"], context.user_data["region"])
 
     await _send_access_button_or_text(update.message, "✅ Ro'yxatdan muvaffaqiyatli o'tdingiz.", site_link)
     await update.message.reply_text("Testni boshlash uchun 🔗 Kirish tugmasini bosing.", reply_markup=ReplyKeyboardRemove())
@@ -882,7 +934,7 @@ async def edit_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     user = get_user_by_telegram_id(tg_id)
-    site_link = f"{BASE_SITE_URL}/?tg_id={tg_id}&key={user['access_key']}"
+    site_link = build_site_link(tg_id, user["access_key"], user["first_name"], user["last_name"], user["region"])
     await _send_access_button_or_text(update.message, "✅ Profil muvaffaqiyatli yangilandi.", site_link)
     return ConversationHandler.END
 
