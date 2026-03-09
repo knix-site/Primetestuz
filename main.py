@@ -130,13 +130,27 @@ def region_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 
+def open_db_connection() -> sqlite3.Connection:
+    db_path = (DB_PATH or "app.db").strip() or "app.db"
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    try:
+        conn = sqlite3.connect(db_path)
+    except sqlite3.OperationalError:
+        if db_path == "app.db":
+            raise
+        conn = sqlite3.connect("app.db")
+
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def get_db() -> sqlite3.Connection:
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
+        g.db = open_db_connection()
     return g.db
-
-
 @app.teardown_appcontext
 def close_db(_: Any) -> None:
     db = g.pop("db", None)
@@ -145,9 +159,8 @@ def close_db(_: Any) -> None:
 
 
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = open_db_connection()
     cur = conn.cursor()
-
     cur.executescript(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -222,11 +235,7 @@ def init_db() -> None:
 
 
 def db_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
+    return open_db_connection()
 def get_user_by_telegram_id(telegram_id: int) -> sqlite3.Row | None:
     with db_conn() as conn:
         return conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
@@ -301,13 +310,21 @@ def build_site_link(
 
 
 def is_valid_user(telegram_id: int, key: str) -> sqlite3.Row | None:
-    with db_conn() as conn:
-        return conn.execute(
-            "SELECT * FROM users WHERE telegram_id = ? AND access_key = ?",
-            (telegram_id, key),
-        ).fetchone()
-
-
+    try:
+        with db_conn() as conn:
+            return conn.execute(
+                "SELECT * FROM users WHERE telegram_id = ? AND access_key = ?",
+                (telegram_id, key),
+            ).fetchone()
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e).lower():
+            raise
+        init_db()
+        with db_conn() as conn:
+            return conn.execute(
+                "SELECT * FROM users WHERE telegram_id = ? AND access_key = ?",
+                (telegram_id, key),
+            ).fetchone()
 def is_admin(telegram_id: int) -> bool:
     return telegram_id in ADMIN_IDS
 
@@ -1134,6 +1151,7 @@ if __name__ == "__main__":
     flask_thread.start()
 
     run_bot()
+
 
 
 
