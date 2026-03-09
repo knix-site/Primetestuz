@@ -66,7 +66,8 @@ def load_local_env(path: str = ".env") -> None:
 
 load_local_env()
 
-DB_PATH = os.getenv("DB_PATH", "app.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = (os.getenv("DB_PATH", "").strip() or os.path.join(BASE_DIR, "app.db"))
 BOT_TOKEN = os.getenv("BOT_TOKEN", "TOKENNI_BU_YERGA_QOYING")
 BASE_SITE_URL = os.getenv("BASE_SITE_URL", "http://localhost:5000")
 TG_CHANNEL_URL = os.getenv("TG_CHANNEL_URL", "https://t.me/your_channel")
@@ -131,18 +132,14 @@ def region_keyboard() -> ReplyKeyboardMarkup:
 
 
 def open_db_connection() -> sqlite3.Connection:
-    db_path = (DB_PATH or "app.db").strip() or "app.db"
+    db_path = (DB_PATH or "").strip() or os.path.join(BASE_DIR, "app.db")
+    if not os.path.isabs(db_path):
+        db_path = os.path.join(BASE_DIR, db_path)
     db_dir = os.path.dirname(db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
 
-    try:
-        conn = sqlite3.connect(db_path)
-    except sqlite3.OperationalError:
-        if db_path == "app.db":
-            raise
-        conn = sqlite3.connect("app.db")
-
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -362,6 +359,33 @@ def create_test_from_keys(test_number: str, keys: str) -> tuple[bool, str]:
 
     return True, f"✅ {title} yaratildi. Savollar soni: {len(cleaned)} ta."
 
+
+def delete_test_by_number(test_number: str) -> tuple[bool, str]:
+    title = f"{test_number}-test"
+    with db_conn() as conn:
+        test = conn.execute("SELECT id FROM tests WHERE title = ?", (title,)).fetchone()
+        if not test:
+            return False, f"{title} topilmadi."
+
+        test_id = test["id"]
+        submission_ids = conn.execute("SELECT id FROM submissions WHERE test_id = ?", (test_id,)).fetchall()
+        sub_ids = [row["id"] for row in submission_ids]
+
+        if sub_ids:
+            placeholders = ",".join(["?"] * len(sub_ids))
+            conn.execute(
+                f"DELETE FROM submission_answers WHERE submission_id IN ({placeholders})",
+                sub_ids,
+            )
+
+        conn.execute("DELETE FROM submissions WHERE test_id = ?", (test_id,))
+        conn.execute("DELETE FROM questions WHERE test_id = ?", (test_id,))
+        conn.execute("DELETE FROM tests WHERE id = ?", (test_id,))
+        conn.commit()
+
+        print(f"[ADMIN DELETE] db={DB_PATH} title={title} test_id={test_id}")
+
+    return True, f"{title} o'chirildi."
 
 def get_test_results_rows(test_number: str) -> tuple[str | None, list[sqlite3.Row]]:
     title = f"{test_number}-test"
@@ -976,7 +1000,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 def admin_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [["🧪 Test yaratish", "📊 Natijalarni olish"], ["❌ Admin paneldan chiqish"]],
+        [["🧪 Test yaratish", "📊 Natijalarni olish"], ["🗑 Test o'chirish", "❌ Admin paneldan chiqish"]],
         resize_keyboard=True,
     )
 
@@ -1006,6 +1030,12 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         context.user_data["admin_action"] = "results"
         context.user_data["admin_state"] = "results_number"
         await update.message.reply_text("Qaysi test raqami natijasi kerak? (masalan: 55) 📈")
+        return ADMIN_TEST_NUMBER
+
+    if text in {"🗑 test o'chirish", "test o'chirish"}:
+        context.user_data["admin_action"] = "delete"
+        context.user_data["admin_state"] = "delete_number"
+        await update.message.reply_text("Qaysi testni o'chiramiz? Raqamini kiriting (masalan: 12) 🗑")
         return ADMIN_TEST_NUMBER
 
     if text in {"❌ admin paneldan chiqish", "admin paneldan chiqish"}:
@@ -1047,6 +1077,13 @@ async def admin_test_number(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("Yana amal tanlang 👇", reply_markup=admin_keyboard())
         return ADMIN_ACTION
 
+    if mode == "delete":
+        ok, msg = delete_test_by_number(test_number)
+        await update.message.reply_text(msg)
+        context.user_data["admin_state"] = "action"
+        await update.message.reply_text("Yana amal tanlang 👇", reply_markup=admin_keyboard())
+        return ADMIN_ACTION
+
     await update.message.reply_text("Iltimos, amalni boshidan tanlang.", reply_markup=admin_keyboard())
     return ADMIN_ACTION
 
@@ -1084,6 +1121,16 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await admin_panel(update, context)
 
 
+async def admin_delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    tg_id = update.effective_user.id
+    if not is_admin(tg_id):
+        await update.message.reply_text("Kechirasiz, sizda admin huquqi yo'q ⛔")
+        return
+
+    context.user_data["admin_action"] = "delete"
+    context.user_data["admin_state"] = "delete_number"
+    await update.message.reply_text("Qaysi testni o'chiramiz? Raqamini kiriting (masalan: 12) 🗑")
+
 async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     tg_id = update.effective_user.id
     if not is_admin(tg_id):
@@ -1096,7 +1143,7 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if state == "action":
         await admin_action(update, context)
         return
-    if state in {"create_number", "results_number"}:
+    if state in {"create_number", "results_number", "delete_number"}:
         await admin_test_number(update, context)
         return
     if state == "create_keys":
@@ -1151,6 +1198,7 @@ def run_bot() -> None:
         allow_reentry=True,
     )
     application.add_handler(CommandHandler(["admin", "panel"], admin_command), group=-1)
+    application.add_handler(CommandHandler("delete", admin_delete_command), group=-1)
     application.add_handler(CommandHandler("canceladmin", admin_cancel), group=-1)
     application.add_handler(CommandHandler("cenceladmin", admin_cancel), group=-1)
     application.add_handler(CommandHandler("cencel", cancel), group=-1)
@@ -1172,6 +1220,10 @@ if __name__ == "__main__":
     flask_thread.start()
 
     run_bot()
+
+
+
+
 
 
 
