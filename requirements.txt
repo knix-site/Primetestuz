@@ -2,5 +2,6 @@
 python-telegram-bot==21.7
 openpyxl==3.1.5
 Pillow==11.1.0
-gunicorn==22.0.0
+gunicorn==23.0.0
+
 
