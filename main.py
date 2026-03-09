@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote_plus, urlparse
 
-from flask import Flask, abort, g, redirect, render_template, request, url_for
+from flask import Flask, abort, g, make_response, redirect, render_template, request, url_for
 from telegram import (
     Bot,
     InlineKeyboardButton,
@@ -357,6 +357,9 @@ def create_test_from_keys(test_number: str, keys: str) -> tuple[bool, str]:
         )
         conn.commit()
 
+        # Quick trace for production debugging of DB consistency issues.
+        print(f"[ADMIN CREATE] db={DB_PATH} title={title} questions={len(cleaned)}")
+
     return True, f"✅ {title} yaratildi. Savollar soni: {len(cleaned)} ta."
 
 
@@ -635,16 +638,22 @@ def test_list() -> str:
     else:
         tests = db.execute("SELECT id, title, description FROM tests ORDER BY id DESC").fetchall()
 
-    return render_template(
-        "tests.html",
-        tests=tests,
-        tg_id=tg_id,
-        key=key,
-        search=search,
-        user=user,
-        tg_channel=TG_CHANNEL_URL,
-        youtube=YOUTUBE_URL,
+    response = make_response(
+        render_template(
+            "tests.html",
+            tests=tests,
+            tg_id=tg_id,
+            key=key,
+            search=search,
+            user=user,
+            tg_channel=TG_CHANNEL_URL,
+            youtube=YOUTUBE_URL,
+        )
     )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/profile", methods=["GET", "POST"])
@@ -1047,6 +1056,18 @@ async def admin_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     ok, msg = create_test_from_keys(test_number, keys)
     await update.message.reply_text(msg)
+
+    if ok:
+        tg_id = update.effective_user.id
+        user = get_user_by_telegram_id(tg_id)
+        if user:
+            test_title = f"{test_number}-test"
+            site_link = (
+                f"{build_site_link(tg_id, user['access_key'], user['first_name'], user['last_name'], user['region'])}"
+                f"&q={quote_plus(test_title)}&v={int(datetime.now().timestamp())}"
+            )
+            await update.message.reply_text(f"Yaratilgan testni tekshirish: {site_link}")
+
     context.user_data["admin_state"] = "action"
     await update.message.reply_text("Yana amal tanlang 👇", reply_markup=admin_keyboard())
     return ADMIN_ACTION
@@ -1151,6 +1172,8 @@ if __name__ == "__main__":
     flask_thread.start()
 
     run_bot()
+
+
 
 
 
