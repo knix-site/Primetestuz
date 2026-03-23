@@ -6,6 +6,7 @@
   <form method="get" class="search-row">
     <input type="hidden" name="tg_id" value="{{ tg_id }}" />
     <input type="hidden" name="key" value="{{ key }}" />
+    <input type="hidden" name="tc" value="{{ tc }}" />
     <input
       id="searchInput"
       type="text"
@@ -18,11 +19,14 @@
   </form>
 
   <div class="tests-grid" id="testsGrid">
+    {% if code_error %}
+      <p class="warn">{{ code_error }}</p>
+    {% endif %}
     {% for t in tests %}
       <article class="test-card" data-title="{{ t['title']|lower }}">
         <h3>{{ t['title'] }}</h3>
         <p>{{ t['description'] or "Test tavsifi mavjud emas" }}</p>
-        <a class="btn btn-soft" href="{{ url_for('test_detail', test_id=t['id']) }}?tg_id={{ tg_id }}&key={{ key }}">Testni ochish</a>
+        <a class="btn btn-soft" href="{{ url_for('test_detail', test_id=t['id']) }}?tg_id={{ tg_id }}&key={{ key }}&tc={{ tc }}">Testni ochish</a>
       </article>
     {% else %}
       <p class="warn">Hech qanday test topilmadi.</p>

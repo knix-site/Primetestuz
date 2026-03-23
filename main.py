@@ -83,6 +83,7 @@ ADMIN_IDS = {
 REGISTER_FIRST, REGISTER_LAST, REGISTER_REGION = range(3)
 ADMIN_ACTION, ADMIN_TEST_NUMBER, ADMIN_KEYS = range(3, 6)
 EDIT_FIRST, EDIT_LAST, EDIT_REGION = range(6, 9)
+TEST_CODE = 9
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "change-me-please")
@@ -172,7 +173,8 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS tests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL UNIQUE,
-            description TEXT
+            description TEXT,
+            access_code TEXT
         );
 
         CREATE TABLE IF NOT EXISTS questions (
@@ -208,11 +210,22 @@ def init_db() -> None:
         """
     )
 
+    # Ensure access_code column exists on existing databases.
+    cols = {row[1] for row in cur.execute("PRAGMA table_info(tests)").fetchall()}
+    if "access_code" not in cols:
+        cur.execute("ALTER TABLE tests ADD COLUMN access_code TEXT")
+
+    # Unique index for access codes.
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_tests_access_code ON tests(access_code)")
+
+    # Backfill missing access codes on existing rows.
+    ensure_test_codes(conn)
+
     cur.execute("SELECT COUNT(*) FROM tests")
     if cur.fetchone()[0] == 0:
         cur.execute(
-            "INSERT INTO tests (title, description) VALUES (?, ?)",
-            ("41-test", "Matematika bo'yicha qisqa test"),
+            "INSERT INTO tests (title, description, access_code) VALUES (?, ?, ?)",
+            ("41-test", "Matematika bo'yicha qisqa test", "DEMO41"),
         )
         test_id = cur.lastrowid
         cur.executemany(
@@ -326,6 +339,23 @@ def is_admin(telegram_id: int) -> bool:
     return telegram_id in ADMIN_IDS
 
 
+def generate_test_code(conn: sqlite3.Connection) -> str:
+    # Short human-friendly code, uppercase letters + digits.
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    while True:
+        code = "".join(secrets.choice(alphabet) for _ in range(6))
+        exists = conn.execute("SELECT 1 FROM tests WHERE access_code = ?", (code,)).fetchone()
+        if not exists:
+            return code
+
+
+def ensure_test_codes(conn: sqlite3.Connection) -> None:
+    rows = conn.execute("SELECT id FROM tests WHERE access_code IS NULL OR access_code = ''").fetchall()
+    for r in rows:
+        code = generate_test_code(conn)
+        conn.execute("UPDATE tests SET access_code = ? WHERE id = ?", (code, r["id"]))
+
+
 def create_test_from_keys(test_number: str, keys: str) -> tuple[bool, str]:
     title = f"{test_number}-test"
     cleaned = keys.strip().lower()
@@ -338,9 +368,10 @@ def create_test_from_keys(test_number: str, keys: str) -> tuple[bool, str]:
         if exists:
             return False, f"{title} allaqachon mavjud."
 
+        access_code = generate_test_code(conn)
         cur = conn.execute(
-            "INSERT INTO tests (title, description) VALUES (?, ?)",
-            (title, f"Admin yaratgan kalitli test. Savollar soni: {len(cleaned)}"),
+            "INSERT INTO tests (title, description, access_code) VALUES (?, ?, ?)",
+            (title, f"Admin yaratgan kalitli test. Savollar soni: {len(cleaned)}", access_code),
         )
         test_id = cur.lastrowid
         rows = []
@@ -355,9 +386,9 @@ def create_test_from_keys(test_number: str, keys: str) -> tuple[bool, str]:
         conn.commit()
 
         # Quick trace for production debugging of DB consistency issues.
-        print(f"[ADMIN CREATE] db={DB_PATH} title={title} questions={len(cleaned)}")
+        print(f"[ADMIN CREATE] db={DB_PATH} title={title} questions={len(cleaned)} code={access_code}")
 
-    return True, f"✅ {title} yaratildi. Savollar soni: {len(cleaned)} ta."
+    return True, f"✅ {title} yaratildi. Savollar soni: {len(cleaned)} ta. Test kodi: {access_code}"
 
 
 def delete_test_by_number(test_number: str) -> tuple[bool, str]:
@@ -386,6 +417,13 @@ def delete_test_by_number(test_number: str) -> tuple[bool, str]:
         print(f"[ADMIN DELETE] db={DB_PATH} title={title} test_id={test_id}")
 
     return True, f"{title} o'chirildi."
+
+
+def get_test_by_access_code(code: str) -> sqlite3.Row | None:
+    if not code:
+        return None
+    with db_conn() as conn:
+        return conn.execute("SELECT * FROM tests WHERE access_code = ?", (code,)).fetchone()
 
 def get_test_results_rows(test_number: str) -> tuple[str | None, list[sqlite3.Row]]:
     title = f"{test_number}-test"
@@ -632,6 +670,7 @@ def push_test_result_certificate(
 def test_list() -> str:
     tg_id = request.args.get("tg_id", type=int)
     key = request.args.get("key", default="", type=str)
+    test_code = request.args.get("tc", default="", type=str).strip().upper()
     first_name = request.args.get("fn", default="", type=str).strip()
     last_name = request.args.get("ln", default="", type=str).strip()
     region = request.args.get("rg", default="", type=str).strip()
@@ -654,13 +693,23 @@ def test_list() -> str:
         return render_template("public_home.html", user=None, tg_channel=TG_CHANNEL_URL, youtube=YOUTUBE_URL)
 
     db = get_db()
-    if search:
-        tests = db.execute(
-            "SELECT id, title, description FROM tests WHERE title LIKE ? ORDER BY id DESC",
-            (f"%{search}%",),
-        ).fetchall()
+    tests = []
+    code_error = ""
+    if not test_code:
+        code_error = "Testga kirish uchun botdan olingan test kodini kiriting."
     else:
-        tests = db.execute("SELECT id, title, description FROM tests ORDER BY id DESC").fetchall()
+        if search:
+            tests = db.execute(
+                "SELECT id, title, description, access_code FROM tests WHERE access_code = ? AND title LIKE ? ORDER BY id DESC",
+                (test_code, f"%{search}%"),
+            ).fetchall()
+        else:
+            tests = db.execute(
+                "SELECT id, title, description, access_code FROM tests WHERE access_code = ? ORDER BY id DESC",
+                (test_code,),
+            ).fetchall()
+        if not tests:
+            code_error = "Test kodi noto'g'ri yoki test topilmadi."
 
     response = make_response(
         render_template(
@@ -668,7 +717,9 @@ def test_list() -> str:
             tests=tests,
             tg_id=tg_id,
             key=key,
+            tc=test_code,
             search=search,
+            code_error=code_error,
             user=user,
             tg_channel=TG_CHANNEL_URL,
             youtube=YOUTUBE_URL,
@@ -734,6 +785,7 @@ def profile_page() -> str:
 def test_detail(test_id: int) -> str:
     tg_id = request.args.get("tg_id", type=int)
     key = request.args.get("key", default="", type=str)
+    test_code = request.args.get("tc", default="", type=str).strip().upper()
 
     if not tg_id or not key:
         return redirect(url_for("test_list"))
@@ -746,6 +798,8 @@ def test_detail(test_id: int) -> str:
     test = db.execute("SELECT * FROM tests WHERE id = ?", (test_id,)).fetchone()
     if not test:
         abort(404)
+    if not test_code or test_code != (test["access_code"] or "").upper():
+        return redirect(url_for("test_list", tg_id=tg_id, key=key, tc=test_code))
 
     questions = db.execute("SELECT * FROM questions WHERE test_id = ? ORDER BY id", (test_id,)).fetchall()
 
@@ -873,9 +927,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     existing = get_user_by_telegram_id(tg_id)
 
     if existing:
-        site_link = build_site_link(tg_id, existing["access_key"], existing["first_name"], existing["last_name"], existing["region"])
-        await _send_access_button_or_text(update.message, "✅ Siz allaqachon ro'yxatdan o'tgansiz.", site_link)
-        return ConversationHandler.END
+        await update.message.reply_text(
+            "Test yaratish uchun @murojatuchunadminbek shu adminga bog'laning !!!\n"
+            "Tayyor testda qatnashish uchun test kodini kiriting."
+        )
+        return TEST_CODE
 
     await update.message.reply_text("Salom! 👋\nRo'yxatdan o'tishni boshlaymiz.\nIsmingizni kiriting:")
     return REGISTER_FIRST
@@ -910,10 +966,37 @@ async def region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["region"] = text
     tg_id = update.effective_user.id
     key = save_user(tg_id, context.user_data["first_name"], context.user_data["last_name"], context.user_data["region"])
-    site_link = build_site_link(tg_id, key, context.user_data["first_name"], context.user_data["last_name"], context.user_data["region"])
+    await update.message.reply_text(
+        "✅ Ro'yxatdan muvaffaqiyatli o'tdingiz.\n"
+        "Test yaratish uchun @murojatuchunadminbek shu adminga bog'laning !!!\n"
+        "Tayyor testda qatnashish uchun test kodini kiriting.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return TEST_CODE
 
-    await _send_access_button_or_text(update.message, "✅ Ro'yxatdan muvaffaqiyatli o'tdingiz.", site_link)
-    await update.message.reply_text("Testni boshlash uchun 🔗 Kirish tugmasini bosing.", reply_markup=ReplyKeyboardRemove())
+
+async def test_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    code = (update.message.text or "").strip().upper()
+    if len(code) < 4:
+        await update.message.reply_text("Test kodini to'g'ri kiriting.")
+        return TEST_CODE
+
+    test = get_test_by_access_code(code)
+    if not test:
+        await update.message.reply_text("Test kodi topilmadi. Qayta kiriting.")
+        return TEST_CODE
+
+    tg_id = update.effective_user.id
+    user = get_user_by_telegram_id(tg_id)
+    if not user:
+        await update.message.reply_text("Avval /start orqali ro'yxatdan o'ting.")
+        return ConversationHandler.END
+
+    site_link = (
+        f"{build_site_link(tg_id, user['access_key'], user['first_name'], user['last_name'], user['region'])}"
+        f"&q={quote_plus(test['title'])}&tc={quote_plus(code)}&v={int(datetime.now().timestamp())}"
+    )
+    await _send_access_button_or_text(update.message, "✅ Testga kirish uchun havola:", site_link)
     return ConversationHandler.END
 
 
@@ -1044,7 +1127,7 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await update.message.reply_text("Admin panel yopildi ✅", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
 
-    await update.message.reply_text("Iltimos, tugmadan tanlang: Test yaratish yoki Natijalarni olish.")
+    await update.message.reply_text("Iltimos, tugmadan tanlang: Test yaratish, Natijalarni olish yoki Test o'chirish.")
     return ADMIN_ACTION
 
 
@@ -1099,9 +1182,13 @@ async def admin_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         user = get_user_by_telegram_id(tg_id)
         if user:
             test_title = f"{test_number}-test"
+            access = None
+            with db_conn() as conn:
+                row = conn.execute("SELECT access_code FROM tests WHERE title = ?", (test_title,)).fetchone()
+                access = (row["access_code"] if row else None)
             site_link = (
                 f"{build_site_link(tg_id, user['access_key'], user['first_name'], user['last_name'], user['region'])}"
-                f"&q={quote_plus(test_title)}&v={int(datetime.now().timestamp())}"
+                f"&q={quote_plus(test_title)}&tc={quote_plus(access or '')}&v={int(datetime.now().timestamp())}"
             )
             await update.message.reply_text(f"Yaratilgan testni tekshirish: {site_link}")
 
@@ -1125,6 +1212,11 @@ async def admin_delete_command(update: Update, context: ContextTypes.DEFAULT_TYP
     tg_id = update.effective_user.id
     if not is_admin(tg_id):
         await update.message.reply_text("Kechirasiz, sizda admin huquqi yo'q ⛔")
+        return
+
+    if context.args and context.args[0].isdigit():
+        ok, msg = delete_test_by_number(context.args[0])
+        await update.message.reply_text(msg)
         return
 
     context.user_data["admin_action"] = "delete"
@@ -1179,6 +1271,7 @@ def run_bot() -> None:
             REGISTER_FIRST: [MessageHandler(filters.TEXT & ~filters.COMMAND, first_name)],
             REGISTER_LAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, last_name)],
             REGISTER_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, region)],
+            TEST_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, test_code)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("cencel", cancel)],
         allow_reentry=True,
@@ -1220,6 +1313,7 @@ if __name__ == "__main__":
     flask_thread.start()
 
     run_bot()
+
 
 
 
