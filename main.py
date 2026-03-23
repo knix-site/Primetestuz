@@ -79,11 +79,15 @@ ADMIN_IDS = {
     for x in os.getenv("ADMIN_IDS", "").split(",")
     if x.strip().isdigit()
 }
+SUPER_ADMIN_ID = int(os.getenv("SUPER_ADMIN_ID", "0") or 0)
+if SUPER_ADMIN_ID == 0 and ADMIN_IDS:
+    SUPER_ADMIN_ID = sorted(ADMIN_IDS)[0]
 
 REGISTER_FIRST, REGISTER_LAST, REGISTER_REGION = range(3)
 ADMIN_ACTION, ADMIN_TEST_NUMBER, ADMIN_KEYS = range(3, 6)
 EDIT_FIRST, EDIT_LAST, EDIT_REGION = range(6, 9)
-TEST_CODE = 9
+START_CHOICE = 9
+TEST_CODE = 10
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "change-me-please")
@@ -130,6 +134,14 @@ def region_keyboard() -> ReplyKeyboardMarkup:
         ["Qoraqalpog'iston"],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+
+def start_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [["Test yaratish", "Testda qatnashish"]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
 
 
 def open_db_connection() -> sqlite3.Connection:
@@ -207,6 +219,12 @@ def init_db() -> None:
             is_correct INTEGER NOT NULL,
             FOREIGN KEY(submission_id) REFERENCES submissions(id)
         );
+
+        CREATE TABLE IF NOT EXISTS admins (
+            telegram_id INTEGER PRIMARY KEY,
+            is_super INTEGER NOT NULL DEFAULT 0,
+            added_at TEXT NOT NULL
+        );
         """
     )
 
@@ -220,6 +238,20 @@ def init_db() -> None:
 
     # Backfill missing access codes on existing rows.
     ensure_test_codes(conn)
+
+    # Seed admins from environment.
+    now = datetime.now(timezone.utc).isoformat()
+    if SUPER_ADMIN_ID:
+        cur.execute(
+            "INSERT OR IGNORE INTO admins (telegram_id, is_super, added_at) VALUES (?, ?, ?)",
+            (SUPER_ADMIN_ID, 1, now),
+        )
+    for admin_id in ADMIN_IDS:
+        is_super = 1 if admin_id == SUPER_ADMIN_ID else 0
+        cur.execute(
+            "INSERT OR IGNORE INTO admins (telegram_id, is_super, added_at) VALUES (?, ?, ?)",
+            (admin_id, is_super, now),
+        )
 
     cur.execute("SELECT COUNT(*) FROM tests")
     if cur.fetchone()[0] == 0:
@@ -335,8 +367,68 @@ def is_valid_user(telegram_id: int, key: str) -> sqlite3.Row | None:
                 "SELECT * FROM users WHERE telegram_id = ? AND access_key = ?",
                 (telegram_id, key),
             ).fetchone()
+
+
 def is_admin(telegram_id: int) -> bool:
-    return telegram_id in ADMIN_IDS
+    if telegram_id in ADMIN_IDS or telegram_id == SUPER_ADMIN_ID:
+        return True
+    try:
+        with db_conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM admins WHERE telegram_id = ?",
+                (telegram_id,),
+            ).fetchone()
+        return row is not None
+    except sqlite3.OperationalError:
+        return False
+
+
+def is_super_admin(telegram_id: int) -> bool:
+    if telegram_id == SUPER_ADMIN_ID and SUPER_ADMIN_ID != 0:
+        return True
+    try:
+        with db_conn() as conn:
+            row = conn.execute(
+                "SELECT is_super FROM admins WHERE telegram_id = ?",
+                (telegram_id,),
+            ).fetchone()
+        return bool(row and row["is_super"])
+    except sqlite3.OperationalError:
+        return False
+
+
+def add_admin(telegram_id: int) -> bool:
+    now = datetime.now(timezone.utc).isoformat()
+    with db_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO admins (telegram_id, is_super, added_at) VALUES (?, ?, ?)",
+            (telegram_id, 0, now),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT 1 FROM admins WHERE telegram_id = ?",
+            (telegram_id,),
+        ).fetchone()
+        return row is not None
+
+
+def remove_admin(telegram_id: int) -> bool:
+    if telegram_id == SUPER_ADMIN_ID:
+        return False
+    with db_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM admins WHERE telegram_id = ? AND is_super = 0",
+            (telegram_id,),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def list_admins() -> list[sqlite3.Row]:
+    with db_conn() as conn:
+        return conn.execute(
+            "SELECT telegram_id, is_super, added_at FROM admins ORDER BY is_super DESC, telegram_id ASC"
+        ).fetchall()
 
 
 def generate_test_code(conn: sqlite3.Connection) -> str:
@@ -928,10 +1020,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     if existing:
         await update.message.reply_text(
-            "Test yaratish uchun @murojatuchunadminbek shu adminga bog'laning !!!\n"
-            "Tayyor testda qatnashish uchun test kodini kiriting."
+            "Test yaratasizmi yoki qatnashasizmi?",
+            reply_markup=start_menu_keyboard(),
         )
-        return TEST_CODE
+        return START_CHOICE
 
     await update.message.reply_text("Salom! 👋\nRo'yxatdan o'tishni boshlaymiz.\nIsmingizni kiriting:")
     return REGISTER_FIRST
@@ -968,11 +1060,10 @@ async def region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     key = save_user(tg_id, context.user_data["first_name"], context.user_data["last_name"], context.user_data["region"])
     await update.message.reply_text(
         "✅ Ro'yxatdan muvaffaqiyatli o'tdingiz.\n"
-        "Test yaratish uchun @murojatuchunadminbek shu adminga bog'laning !!!\n"
-        "Tayyor testda qatnashish uchun test kodini kiriting.",
-        reply_markup=ReplyKeyboardRemove(),
+        "Test yaratasizmi yoki qatnashasizmi?",
+        reply_markup=start_menu_keyboard(),
     )
-    return TEST_CODE
+    return START_CHOICE
 
 
 async def test_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -998,6 +1089,28 @@ async def test_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     await _send_access_button_or_text(update.message, "✅ Testga kirish uchun havola:", site_link)
     return ConversationHandler.END
+
+
+async def start_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = (update.message.text or "").strip().lower()
+    if "yarat" in text:
+        await update.message.reply_text(
+            "Test yaratish uchun @Murojatuchunadminbek shu adminga bog'laning !!!",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ConversationHandler.END
+    if "qatnash" in text:
+        await update.message.reply_text(
+            "Tayyor testda qatnashish uchun test kodini kiriting:",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return TEST_CODE
+
+    await update.message.reply_text(
+        "Iltimos, tugmadan tanlang: Test yaratish yoki Testda qatnashish.",
+        reply_markup=start_menu_keyboard(),
+    )
+    return START_CHOICE
 
 
 async def editprofile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1223,6 +1336,44 @@ async def admin_delete_command(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data["admin_state"] = "delete_number"
     await update.message.reply_text("Qaysi testni o'chiramiz? Raqamini kiriting (masalan: 12) 🗑")
 
+
+async def add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    tg_id = update.effective_user.id
+    if not is_super_admin(tg_id):
+        await update.message.reply_text("Kechirasiz, bu buyruq faqat asosiy admin uchun.")
+        return
+
+    context.user_data["admin_state"] = "add_admin"
+    await update.message.reply_text("Admin qo'shmoqchimisiz? Unda uning Telegram ID sini tashlang.")
+
+
+async def remove_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    tg_id = update.effective_user.id
+    if not is_super_admin(tg_id):
+        await update.message.reply_text("Kechirasiz, bu buyruq faqat asosiy admin uchun.")
+        return
+
+    context.user_data["admin_state"] = "remove_admin"
+    await update.message.reply_text("Qaysi adminni o'chiramiz? Telegram ID sini yuboring.")
+
+
+async def list_admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    tg_id = update.effective_user.id
+    if not is_super_admin(tg_id):
+        await update.message.reply_text("Kechirasiz, bu buyruq faqat asosiy admin uchun.")
+        return
+
+    rows = list_admins()
+    if not rows:
+        await update.message.reply_text("Adminlar ro'yxati bo'sh.")
+        return
+
+    lines = ["Adminlar ro'yxati:"]
+    for r in rows:
+        label = "super" if r["is_super"] else "admin"
+        lines.append(f"- {r['telegram_id']} ({label})")
+    await update.message.reply_text("\n".join(lines))
+
 async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     tg_id = update.effective_user.id
     if not is_admin(tg_id):
@@ -1240,6 +1391,34 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if state == "create_keys":
         await admin_keys(update, context)
+        return
+    if state == "add_admin":
+        if not is_super_admin(tg_id):
+            await update.message.reply_text("Kechirasiz, bu buyruq faqat asosiy admin uchun.")
+            context.user_data.pop("admin_state", None)
+            return
+        raw = (update.message.text or "").strip()
+        if not raw.isdigit():
+            await update.message.reply_text("Telegram ID raqam bo'lishi kerak. Qayta kiriting.")
+            return
+        admin_id = int(raw)
+        ok = add_admin(admin_id)
+        await update.message.reply_text("Admin qo'shildi." if ok else "Admin qo'shilmadi.")
+        context.user_data.pop("admin_state", None)
+        return
+    if state == "remove_admin":
+        if not is_super_admin(tg_id):
+            await update.message.reply_text("Kechirasiz, bu buyruq faqat asosiy admin uchun.")
+            context.user_data.pop("admin_state", None)
+            return
+        raw = (update.message.text or "").strip()
+        if not raw.isdigit():
+            await update.message.reply_text("Telegram ID raqam bo'lishi kerak. Qayta kiriting.")
+            return
+        admin_id = int(raw)
+        ok = remove_admin(admin_id)
+        await update.message.reply_text("Admin o'chirildi." if ok else "Admin o'chirilmadi.")
+        context.user_data.pop("admin_state", None)
         return
 
 
@@ -1271,6 +1450,7 @@ def run_bot() -> None:
             REGISTER_FIRST: [MessageHandler(filters.TEXT & ~filters.COMMAND, first_name)],
             REGISTER_LAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, last_name)],
             REGISTER_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, region)],
+            START_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_choice)],
             TEST_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, test_code)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("cencel", cancel)],
@@ -1292,6 +1472,9 @@ def run_bot() -> None:
     )
     application.add_handler(CommandHandler(["admin", "panel"], admin_command), group=-1)
     application.add_handler(CommandHandler("delete", admin_delete_command), group=-1)
+    application.add_handler(CommandHandler("addadmin", add_admin_command), group=-1)
+    application.add_handler(CommandHandler("removeadmin", remove_admin_command), group=-1)
+    application.add_handler(CommandHandler("admins", list_admins_command), group=-1)
     application.add_handler(CommandHandler("canceladmin", admin_cancel), group=-1)
     application.add_handler(CommandHandler("cenceladmin", admin_cancel), group=-1)
     application.add_handler(CommandHandler("cencel", cancel), group=-1)
