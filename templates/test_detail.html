@@ -4,7 +4,7 @@
 <section class="panel glass">
   <div class="row-between">
     <h2>{{ test['title'] }}</h2>
-    <a class="btn btn-soft" href="{{ url_for('test_list') }}?tg_id={{ tg_id }}&key={{ key }}">Ortga</a>
+    <a class="btn btn-soft" href="{{ url_for('test_list') }}?tg_id={{ tg_id }}&key={{ key }}&tc={{ tc }}">Ortga</a>
   </div>
 
   {% if already %}
@@ -21,6 +21,11 @@
       {% for q in questions %}
         <article class="question" data-id="{{ q['id'] }}">
           <h3>{{ loop.index }}-savol: {{ q['text'] }}</h3>
+          {% if q['image_path'] %}
+            <div class="question-image">
+              <img src="{{ q['image_path'] }}" alt="Savol rasmi" />
+            </div>
+          {% endif %}
 
           {% for letter in ["a", "b", "c", "d"] %}
             <label class="option">

@@ -85,9 +85,10 @@ if SUPER_ADMIN_ID == 0 and ADMIN_IDS:
 
 REGISTER_FIRST, REGISTER_LAST, REGISTER_REGION = range(3)
 ADMIN_ACTION, ADMIN_TEST_NUMBER, ADMIN_KEYS = range(3, 6)
-EDIT_FIRST, EDIT_LAST, EDIT_REGION = range(6, 9)
-START_CHOICE = 9
-TEST_CODE = 10
+IMG_TEST_TITLE, IMG_QUESTION_IMAGE, IMG_QUESTION_ANSWER, IMG_QUESTION_NEXT = range(6, 10)
+EDIT_FIRST, EDIT_LAST, EDIT_REGION = range(10, 13)
+START_CHOICE = 13
+TEST_CODE = 14
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "change-me-please")
@@ -139,6 +140,14 @@ def region_keyboard() -> ReplyKeyboardMarkup:
 def start_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [["Test yaratish", "Testda qatnashish"]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def image_test_next_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [["Yana savol", "Bo'ldi"]],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
@@ -197,6 +206,7 @@ def init_db() -> None:
             option_b TEXT NOT NULL,
             option_c TEXT NOT NULL,
             option_d TEXT NOT NULL,
+            image_path TEXT,
             correct_option TEXT NOT NULL,
             FOREIGN KEY(test_id) REFERENCES tests(id)
         );
@@ -238,6 +248,11 @@ def init_db() -> None:
 
     # Backfill missing access codes on existing rows.
     ensure_test_codes(conn)
+
+    # Ensure image_path column exists on questions table.
+    qcols = {row[1] for row in cur.execute("PRAGMA table_info(questions)").fetchall()}
+    if "image_path" not in qcols:
+        cur.execute("ALTER TABLE questions ADD COLUMN image_path TEXT")
 
     # Seed admins from environment.
     now = datetime.now(timezone.utc).isoformat()
@@ -448,6 +463,20 @@ def ensure_test_codes(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE tests SET access_code = ? WHERE id = ?", (code, r["id"]))
 
 
+async def save_telegram_photo(update: Update, test_id: int, index: int) -> str | None:
+    if not update.message or not update.message.photo:
+        return None
+    photo = update.message.photo[-1]
+    file = await photo.get_file()
+    uploads_dir = os.path.join(BASE_DIR, "static", "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+    ts = int(datetime.now(timezone.utc).timestamp())
+    filename = f"test_{test_id}_{index}_{ts}.jpg"
+    full_path = os.path.join(uploads_dir, filename)
+    await file.download_to_drive(full_path)
+    return f"/static/uploads/{filename}"
+
+
 def create_test_from_keys(test_number: str, keys: str) -> tuple[bool, str]:
     title = f"{test_number}-test"
     cleaned = keys.strip().lower()
@@ -469,10 +498,19 @@ def create_test_from_keys(test_number: str, keys: str) -> tuple[bool, str]:
         rows = []
         for i, letter in enumerate(cleaned, start=1):
             rows.append(
-                (test_id, f"{i}-savol: To'g'ri javobni belgilang", "A variant", "B variant", "C variant", "D variant", letter)
+                (
+                    test_id,
+                    f"{i}-savol: To'g'ri javobni belgilang",
+                    "A variant",
+                    "B variant",
+                    "C variant",
+                    "D variant",
+                    None,
+                    letter,
+                )
             )
         conn.executemany(
-            "INSERT INTO questions (test_id, text, option_a, option_b, option_c, option_d, correct_option) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO questions (test_id, text, option_a, option_b, option_c, option_d, image_path, correct_option) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         conn.commit()
@@ -908,6 +946,7 @@ def test_detail(test_id: int) -> str:
                 questions=questions,
                 tg_id=tg_id,
                 key=key,
+                tc=test_code,
                 already=already,
                 user=user,
                 tg_channel=TG_CHANNEL_URL,
@@ -924,6 +963,7 @@ def test_detail(test_id: int) -> str:
                     questions=questions,
                     tg_id=tg_id,
                     key=key,
+                    tc=test_code,
                     user=user,
                     error="Barcha savollarga javob berish majburiy.",
                     tg_channel=TG_CHANNEL_URL,
@@ -987,6 +1027,7 @@ def test_detail(test_id: int) -> str:
         questions=questions,
         tg_id=tg_id,
         key=key,
+        tc=test_code,
         already=already,
         user=user,
         tg_channel=TG_CHANNEL_URL,
@@ -1196,7 +1237,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 def admin_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [["🧪 Test yaratish", "📊 Natijalarni olish"], ["🗑 Test o'chirish", "❌ Admin paneldan chiqish"]],
+        [["🧪 Test yaratish", "🖼 Rasmli test yaratish"], ["📊 Natijalarni olish", "🗑 Test o'chirish"], ["❌ Admin paneldan chiqish"]],
         resize_keyboard=True,
     )
 
@@ -1221,6 +1262,12 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         context.user_data["admin_state"] = "create_number"
         await update.message.reply_text("Test raqamini kiriting (masalan: 55) 🔢")
         return ADMIN_TEST_NUMBER
+
+    if text in {"🖼 rasmli test yaratish", "rasmli test yaratish"}:
+        context.user_data["admin_action"] = "image_create"
+        context.user_data["admin_state"] = "image_title"
+        await update.message.reply_text("Rasmli testga nom bering:")
+        return IMG_TEST_TITLE
 
     if text in {"📊 natijalarni olish", "natijalarni olish"}:
         context.user_data["admin_action"] = "results"
@@ -1310,6 +1357,115 @@ async def admin_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ADMIN_ACTION
 
 
+async def image_test_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    title = (update.message.text or "").strip()
+    if len(title) < 2:
+        await update.message.reply_text("Test nomi kamida 2 ta belgidan iborat bo'lsin.")
+        return IMG_TEST_TITLE
+
+    with db_conn() as conn:
+        exists = conn.execute("SELECT id FROM tests WHERE title = ?", (title,)).fetchone()
+        if exists:
+            await update.message.reply_text("Bu nomdagi test allaqachon mavjud. Boshqa nom kiriting.")
+            return IMG_TEST_TITLE
+
+        code = generate_test_code(conn)
+        cur = conn.execute(
+            "INSERT INTO tests (title, description, access_code) VALUES (?, ?, ?)",
+            (title, "Rasmli test", code),
+        )
+        test_id = cur.lastrowid
+        conn.commit()
+
+    context.user_data["img_test_id"] = test_id
+    context.user_data["img_test_title"] = title
+    context.user_data["img_test_code"] = code
+    context.user_data["img_question_index"] = 1
+    context.user_data["admin_state"] = "image_photo"
+
+    await update.message.reply_text("1-savol rasmini yuboring.")
+    return IMG_QUESTION_IMAGE
+
+
+async def image_test_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    test_id = context.user_data.get("img_test_id")
+    index = context.user_data.get("img_question_index", 1)
+    if not test_id:
+        await update.message.reply_text("Test topilmadi. /admin orqali qayta boshlang.")
+        return ConversationHandler.END
+
+    image_path = await save_telegram_photo(update, test_id, index)
+    if not image_path:
+        await update.message.reply_text("Iltimos, savol rasmini yuboring.")
+        return IMG_QUESTION_IMAGE
+
+    context.user_data["img_image_path"] = image_path
+    context.user_data["admin_state"] = "image_answer"
+    await update.message.reply_text("To'g'ri javobni kiriting (a/b/c/d):")
+    return IMG_QUESTION_ANSWER
+
+
+async def image_test_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    answer = (update.message.text or "").strip().lower()
+    if answer not in {"a", "b", "c", "d"}:
+        await update.message.reply_text("Faqat a, b, c, d kiriting.")
+        return IMG_QUESTION_ANSWER
+
+    test_id = context.user_data.get("img_test_id")
+    index = context.user_data.get("img_question_index", 1)
+    image_path = context.user_data.get("img_image_path")
+    if not test_id or not image_path:
+        await update.message.reply_text("Rasm topilmadi. Qayta urinib ko'ring.")
+        return IMG_QUESTION_IMAGE
+
+    with db_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO questions (test_id, text, option_a, option_b, option_c, option_d, image_path, correct_option)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (test_id, f"{index}-savol", "A", "B", "C", "D", image_path, answer),
+        )
+        conn.commit()
+
+    context.user_data["img_question_index"] = index + 1
+    context.user_data["admin_state"] = "image_next"
+    await update.message.reply_text("Yana savol qo'shasizmi?", reply_markup=image_test_next_keyboard())
+    return IMG_QUESTION_NEXT
+
+
+async def image_test_next(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = (update.message.text or "").strip().lower()
+    if "yana" in text:
+        index = context.user_data.get("img_question_index", 1)
+        context.user_data["admin_state"] = "image_photo"
+        await update.message.reply_text(f"{index}-savol rasmini yuboring.", reply_markup=ReplyKeyboardRemove())
+        return IMG_QUESTION_IMAGE
+
+    if "bo'ldi" in text or "boldi" in text:
+        tg_id = update.effective_user.id
+        user = get_user_by_telegram_id(tg_id)
+        test_title = context.user_data.get("img_test_title", "")
+        code = context.user_data.get("img_test_code", "")
+        if user and test_title and code:
+            site_link = (
+                f"{build_site_link(tg_id, user['access_key'], user['first_name'], user['last_name'], user['region'])}"
+                f"&q={quote_plus(test_title)}&tc={quote_plus(code)}&v={int(datetime.now().timestamp())}"
+            )
+            await update.message.reply_text(f"Test yaratildi. Test kodi: {code}")
+            await update.message.reply_text(f"Yaratilgan testni tekshirish: {site_link}")
+        context.user_data.pop("img_test_id", None)
+        context.user_data.pop("img_test_title", None)
+        context.user_data.pop("img_test_code", None)
+        context.user_data.pop("img_question_index", None)
+        context.user_data.pop("img_image_path", None)
+        context.user_data.pop("admin_state", None)
+        return ConversationHandler.END
+
+    await update.message.reply_text("Iltimos, 'Yana savol' yoki 'Bo'ldi' ni tanlang.", reply_markup=image_test_next_keyboard())
+    return IMG_QUESTION_NEXT
+
+
 async def admin_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.pop("admin_state", None)
     context.user_data.pop("admin_action", None)
@@ -1392,6 +1548,18 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if state == "create_keys":
         await admin_keys(update, context)
         return
+    if state == "image_title":
+        await image_test_title(update, context)
+        return
+    if state == "image_photo":
+        await image_test_photo(update, context)
+        return
+    if state == "image_answer":
+        await image_test_answer(update, context)
+        return
+    if state == "image_next":
+        await image_test_next(update, context)
+        return
     if state == "add_admin":
         if not is_super_admin(tg_id):
             await update.message.reply_text("Kechirasiz, bu buyruq faqat asosiy admin uchun.")
@@ -1420,6 +1588,16 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("Admin o'chirildi." if ok else "Admin o'chirilmadi.")
         context.user_data.pop("admin_state", None)
         return
+
+
+async def admin_photo_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    tg_id = update.effective_user.id
+    if not is_admin(tg_id):
+        return
+
+    state = context.user_data.get("admin_state")
+    if state == "image_photo":
+        await image_test_photo(update, context)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1479,6 +1657,7 @@ def run_bot() -> None:
     application.add_handler(CommandHandler("cenceladmin", admin_cancel), group=-1)
     application.add_handler(CommandHandler("cencel", cancel), group=-1)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_text_router), group=-1)
+    application.add_handler(MessageHandler(filters.PHOTO, admin_photo_router), group=-1)
 
     application.add_handler(user_conv)
     application.add_handler(edit_conv)
