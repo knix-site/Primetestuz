@@ -1136,7 +1136,7 @@ async def start_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     text = (update.message.text or "").strip().lower()
     if "yarat" in text:
         await update.message.reply_text(
-            "Test yaratish uchun @Murojatuchunadminbek shu adminga bog'laning !!!",
+            "Test yaratish uchun @/Matematika_prime_admin shu adminga bog'laning !!!",
             reply_markup=ReplyKeyboardRemove(),
         )
         return ConversationHandler.END
